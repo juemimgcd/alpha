@@ -1,4 +1,4 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
 import { runLoop } from "./agent-loop.ts";
 import type { AgentEndEvent, AgentEvent, EventListener, RunResult } from "./events.ts";
@@ -6,6 +6,7 @@ import { copyMessages } from "./hooks.ts";
 import type { Hook } from "./hooks.ts";
 import type { ModelIO } from "./model-io.ts";
 import type { Tool } from "./tools.ts";
+import { responseCalls, validateHistory } from "./protocol.ts";
 
 export class Agent {
   private messages: BaseMessage[];
@@ -48,6 +49,28 @@ export class Agent {
         "最终回答区分已经完成与尚未验证的内容。",
       ),
     ];
+  }
+
+  getMessages(): BaseMessage[] {
+    return copyMessages(this.messages);
+  }
+
+  replaceMessages(messages: BaseMessage[]): void {
+    if (this.controller !== undefined || this.deliveryFailed) {
+      throw new Error("只能为未运行且未发生通知失败的 Agent 装入历史");
+    }
+    const restored = copyMessages(messages);
+    if (!(restored[0] instanceof SystemMessage)) {
+      throw new Error("会话必须以 SystemMessage 开始");
+    }
+    // 加载历史也是输入边界，复用同一个 protocol.ts，不另写配对规则。
+    for (const message of restored) {
+      if (message instanceof AIMessage) {
+        responseCalls(message);
+      }
+    }
+    validateHistory(restored);
+    this.messages = restored;
   }
 
   subscribe(listener: EventListener): () => void {

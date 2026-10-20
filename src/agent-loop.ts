@@ -7,6 +7,7 @@ import type { Hook, TurnInfo } from "./hooks.ts";
 import type { ModelIO } from "./model-io.ts";
 import { responseCalls, validateHistory } from "./protocol.ts";
 import type { Tool } from "./tools.ts";
+import { resolveNaptr } from "node:dns";
 
 
 export async function runLoop(
