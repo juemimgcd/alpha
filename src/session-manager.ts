@@ -3,8 +3,10 @@ import { appendFile, mkdir, readFile, realpath, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path";
 import type { BaseMessage } from "@langchain/core/messages";
 import { decodeMessage, encodeMessage } from "./message-codec.ts";
-import { messageEntrySchema, sessionHeaderSchema, sessionRecordSchema } from "./session-types.ts";
-import type { MessageEntry, SessionHeader, SessionRecord } from "./session-types.ts";
+import { compactionEntrySchema, messageEntrySchema, sessionHeaderSchema, sessionRecordSchema } from "./session-types.ts";
+import type { CompactionEntry, MessageEntry, SessionEntry, SessionHeader, SessionRecord } from "./session-types.ts";
+import { buildContext } from "./context.ts";
+
 
 
 
@@ -13,11 +15,11 @@ import type { MessageEntry, SessionHeader, SessionRecord } from "./session-types
 export class SessionManager {
   readonly filePath: string;
   private header: SessionHeader;
-  private entries: MessageEntry[];
+  private entries: SessionEntry[];
   private writing: boolean;
   private failed: boolean;
 
-  private constructor(filePath: string, header: SessionHeader, entries: MessageEntry[]) {
+  private constructor(filePath: string, header: SessionHeader, entries: SessionEntry[]) {
     this.filePath = filePath;
     this.header = header;
     this.entries = entries;
@@ -28,21 +30,22 @@ export class SessionManager {
   static async create(cwd: string, messages: BaseMessage[]): Promise<SessionManager> {
     const root = await realpath(cwd);
     const header = sessionHeaderSchema.parse({
-      type:"sessoin",
-      version:1,
-      id:randomUUID(),
-      timestamp:new Date().toISOString(),
-      cwd:root,
+      type: "session",
+      version: 2,
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      cwd: root,
     });
-    const entries:MessageEntry[] = [];
-    for (const message of messages){
+    const entries: SessionEntry[] = [];
+    for (const message of messages) {
       entries.push(messageEntrySchema.parse({
-        type:"message",
-        id:randomUUID(),
-        timestamp:new Date().toDateString(),
-        message:encodeMessage(message),
+        type: "message",
+        id: randomUUID(),
+        timestamp: new Date().toISOString(),
+        message: encodeMessage(message),
       }));
     }
+
     const directory = join(root, ".alpha", "sessions");
     await mkdir(directory, { recursive: true });
     const filePath = join(directory, `${header.id}.jsonl`);
@@ -62,64 +65,94 @@ export class SessionManager {
 
     const lines = text.slice(0, -1).split("\n");
     const ids = new Set<string>();
-    const entries: MessageEntry[] = [];
+    const entries: SessionEntry[] = [];
     let header: SessionHeader | undefined;
 
-    for (let index =0; index < lines.length; index++){
-      try{
-        let raw:unknown = JSON.parse(lines[index]);
+    for (let index = 0; index < lines.length; index += 1) {
+      try {
+        const raw: unknown = JSON.parse(lines[index]);
         const record = sessionRecordSchema.parse(raw);
-        if (ids.has(record.id)){
-          throw new Error();
+        if (ids.has(record.id)) {
+          throw new Error(`记录 ID 重复：${record.id}`);
         }
         ids.add(record.id);
-
-        if (index === 0){
-          if (record.type !== "session"){
-            throw new Error();
+        if (index === 0) {
+          if (record.type !== "session") {
+            throw new Error("第一行必须是 session 头部");
           }
-          if (record.cwd !== root){
-            throw new Error();
+          if (record.cwd !== root) {
+            throw new Error(`工作目录不一致：会话属于 ${record.cwd}，当前为 ${root}`);
           }
           header = record;
-        }else {
-          if (record.type !== "message") {
-            throw new Error("头部之后只能出现 message 记录");
+        } else {
+          if (record.type === "session") {
+            throw new Error("头部不能重复出现");
           }
           entries.push(record);
         }
-      }catch(error:unknown){
-        const detail = error instanceof Error ? error.message:String(error);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
         throw new Error(`${absolutePath}:${index + 1}：${detail}`, { cause: error });
       }
     }
-    if (header == undefined){
+
+    if (header === undefined) {
       throw new Error(`${absolutePath}：缺少 session 头部`);
     }
+    buildContext(entries);
     return new SessionManager(absolutePath, header, entries);
   }
+
   get id(): string {
     return this.header.id;
   }
 
-  getMessages(): BaseMessage[] {
-    return this.entries.map((entry) => decodeMessage(structuredClone(entry.message)));
+
+  getEntries(): SessionEntry[] {
+    if (this.failed) {
+      throw new Error("会话曾写入失败，磁盘状态不确定；请检查文件后重新加载");
+    }
+    return structuredClone(this.entries);
   }
+
+  getMessages(): BaseMessage[] {
+    const messages: BaseMessage[] = [];
+    for (const entry of this.entries) {
+      if (entry.type === "message") {
+        messages.push(decodeMessage(structuredClone(entry.message)));
+      }
+    }
+    return messages;
+  }
+
   async appendMessage(message: BaseMessage): Promise<void> {
+    const entry = messageEntrySchema.parse({
+      type: "message",
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      message: encodeMessage(message),
+    });
+    await this.appendEntry(entry);
+  }
+
+  async appendCompaction(entry: CompactionEntry): Promise<void> {
+    const checked = compactionEntrySchema.parse(entry);
+    buildContext([...this.entries, checked]);
+    await this.appendEntry(checked);
+  }
+
+  private async appendEntry(entry: SessionEntry): Promise<void> {
     if (this.failed) {
       throw new Error("会话之前保存失败，请检查文件后重新加载，不能直接重试追加");
     }
     if (this.writing) {
       throw new Error("会话正在写入，必须等待上一次追加结束");
     }
+    if (entry.id === this.header.id || this.entries.some((item) => item.id === entry.id)) {
+      throw new Error(`记录 ID 重复：${entry.id}`);
+    }
     this.writing = true;
-    try{
-      const entry = messageEntrySchema.parse({
-        type:"message",
-        id:randomUUID(),
-        timestamp:new Date().toISOString(),
-        message:encodeMessage(message),
-      });
+    try {
       await appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf8");
       this.entries.push(entry);
     } catch (error: unknown) {
@@ -130,5 +163,4 @@ export class SessionManager {
       this.writing = false;
     }
   }
-
 }

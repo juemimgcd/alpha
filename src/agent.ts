@@ -3,6 +3,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { runLoop } from "./agent-loop.ts";
 import type { AgentEndEvent, AgentEvent, EventListener, RunResult } from "./events.ts";
 import { copyMessages } from "./hooks.ts";
+import type { PrepareContext } from "./agent-loop.ts";
 import type { Hook } from "./hooks.ts";
 import type { ModelIO } from "./model-io.ts";
 import type { Tool } from "./tools.ts";
@@ -81,7 +82,7 @@ export class Agent {
   }
 
   private async emit(event: AgentEvent): Promise<void> {
-    if (event.type === "message_end") {
+    if (event.type === "message_end"){
       this.messages.push(event.message);
     }
 
@@ -103,7 +104,7 @@ export class Agent {
     }
   }
 
-  async prompt(input: string): Promise<RunResult> {
+  async prompt(input: string, prepareContext: PrepareContext): Promise<RunResult> {
     if (this.controller !== undefined) {
       throw new Error("Agent 正在运行，请等待结束后再提交输入");
     }
@@ -125,7 +126,7 @@ export class Agent {
     try {
       await this.emit({ type: "message_end", message: new HumanMessage(input) });
       const result = await runLoop(
-        this.messages,
+        prepareContext,
         this.model,
         this.tools,
         this.hooks,

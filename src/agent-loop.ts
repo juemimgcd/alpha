@@ -7,11 +7,13 @@ import type { Hook, TurnInfo } from "./hooks.ts";
 import type { ModelIO } from "./model-io.ts";
 import { responseCalls, validateHistory } from "./protocol.ts";
 import type { Tool } from "./tools.ts";
-import { resolveNaptr } from "node:dns";
+import { SingleRunExtractor } from "@langchain/core/utils/testing";
+import { rmSync } from "node:fs";
 
+export type PrepareContext = (signal: AbortSignal) => Promise<BaseMessage[]>;
 
 export async function runLoop(
-  messages: BaseMessage[],
+  prepareContext: PrepareContext,
   model: ModelIO,
   tools: readonly Tool[],
   hooks: readonly Hook[],
@@ -20,36 +22,36 @@ export async function runLoop(
   signal: AbortSignal,
   emit: EmitEvent,
 ): Promise<RunResult> {
-  for (let turn = 1; turn <= maxTurns; turn += 1) {
+  for (let turn = 1; turn <= maxTurns; turn++){
     signal.throwIfAborted();
-    let requestMessages = copyMessages(messages);
+    let requestMessages = await prepareContext(signal);
+    signal.throwIfAborted();
 
-    for (const hook of hooks) {
-      const replacement = await hook.beforeModel?.(requestMessages, signal);
-      if (replacement !== undefined) {
+    for (const hook of hooks){
+      const replacement = await hook.beforeModel?.(requestMessages,signal);
+      signal.throwIfAborted();
+      if (replacement !== undefined){
         requestMessages = replacement;
       }
     }
-    signal.throwIfAborted();
     validateHistory(requestMessages);
 
-    const response = await model.request(requestMessages, signal);
-    signal.throwIfAborted();
-    const calls = responseCalls(response);
+    const response = await model.request(requestMessages,signal);
 
-    for (const hook of hooks) {
-      if (hook.afterModel !== undefined) {
+    for (const hook of hooks){
+      if (hook.afterModel !== undefined){
         const snapshot = copyMessages([response])[0];
-        if (!(snapshot instanceof AIMessage)) {
-          throw new Error("模型消息副本没有恢复为 AIMessage");
+        if (!(snapshot instanceof AIMessage)){
+          throw new Error();
         }
-        await hook.afterModel(snapshot, signal);
+        await hook.afterModel(snapshot,signal);
+        signal.throwIfAborted();
       }
     }
-    signal.throwIfAborted();
     await emit({ type: "message_end", message: response });
+    const calls = responseCalls(response);
 
-    for (const call of calls) {
+    for (const call of calls){
       await emit({ type: "tool_start", callId: call.id, name: call.name });
       const execution = await executeTool(call, tools, hooks, cwd, signal);
       await emit({ type: "message_end", message: execution.message });
@@ -63,26 +65,24 @@ export async function runLoop(
       });
     }
 
-    const info: TurnInfo = {
-      turn: turn,
-      toolCount: calls.length,
-      hasAnswer: calls.length === 0,
+    const info:TurnInfo = {
+      turn:turn,
+      toolCount:calls.length,
+      hasAnswer:calls.length === 0,
     };
     await emit({ type: "turn_end", ...info });
     signal.throwIfAborted();
 
-    for (const hook of hooks) {
-      const reason = await hook.afterTurn?.({ ...info }, signal);
+    for (const hook of hooks){
+      const reason = await hook.afterTurn?.(info,signal);
       signal.throwIfAborted();
-      if (typeof reason === "string" && reason.trim() !== "") {
-        return { status: "stopped", reason: reason, turns: turn };
+      if (typeof reason === "string" && reason.trim() === ""){
+        return {status:"stopped",reason:reason,turns:turn};
       }
     }
-
-    if (calls.length === 0) {
-      return { status: "completed", answer: response.text, turns: turn };
+    if (calls.length === 0){
+      return {status:"completed",answer:response.text,turns:turn};
     }
   }
-
-  throw new Error(`已达到 ${maxTurns} 次模型请求的上限，本次任务尚未得到最终回答`);
+  throw new Error();
 }

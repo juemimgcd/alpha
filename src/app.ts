@@ -1,5 +1,7 @@
 import { SystemMessage } from "@langchain/core/messages";
+import { createBudget } from "./budget.ts";
 import { Agent } from "./agent.ts";
+import { AgentSession } from "./agent-session.ts";
 import { bashTool } from "./builtin-tools/bash.ts";
 import { editTool } from "./builtin-tools/edit.ts";
 import { readTool } from "./builtin-tools/read.ts";
@@ -9,7 +11,7 @@ import { createModelIO } from "./model-io.ts";
 import { truncateOutput } from "./tools.ts";
 import type { Tool } from "./tools.ts";
 
-export function createAgent(cwd: string): Agent {
+export async function createSession(cwd: string, filePath?: string): Promise<AgentSession> {
   const apiKey = process.env.OPENAI_API_KEY;
   const modelName = process.env.OPENAI_MODEL;
   const baseURL = process.env.OPENAI_BASE_URL;
@@ -64,6 +66,11 @@ export function createAgent(cwd: string): Agent {
     },
   }];
 
-  const model = createModelIO(modelName, apiKey, tools, baseURL);
-  return new Agent(model, tools, cwd, hooks, 8);
+  const budget = createBudget(tools);
+  const model = createModelIO(modelName, apiKey, tools, budget, baseURL);
+  const agent = new Agent(model, tools, cwd, hooks, 8);
+  if (filePath !== undefined) {
+    return await AgentSession.load(agent, cwd, filePath, model, budget);
+  }
+  return await AgentSession.create(agent, cwd, model, budget);
 }
