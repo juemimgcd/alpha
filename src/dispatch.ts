@@ -2,7 +2,7 @@ import { ToolMessage } from "@langchain/core/messages";
 import type { Hook, ToolStatus } from "./hooks.ts";
 import { truncateOutput } from "./tools.ts";
 import type { Tool, ToolCall } from "./tools.ts";
-import { SingleRunExtractor } from "@langchain/core/utils/testing";
+
 
 export type ToolExecution = {
   message: ToolMessage;
@@ -17,25 +17,24 @@ export async function executeTool(
   cwd: string,
   signal: AbortSignal,
 ): Promise<ToolExecution> {
-  let status: ToolStatus = "success";
+  let status:ToolStatus = "success";
   let raw = "";
+
   try{
-    signal.throwIfAborted();
     const tool = tools.find((tool) => tool.name === call.name);
     if (tool === undefined){
       throw new Error();
     }
     const prepare = tool.prepare(call.args);
-
     for (const hook of hooks){
       const reason = await hook.beforeTool?.({
         id:call.id,
         name:call.name,
-        cwd:cwd,
-        args:prepare.args,
+        args:call.args,
+        cwd:cwd
       },signal);
       signal.throwIfAborted();
-      if (typeof reason === "string" && reason.trim() === ""){
+      if (typeof reason === "string" && reason.trim() !== ""){
         status = "denied";
         raw = ``;
         break;
@@ -43,34 +42,36 @@ export async function executeTool(
     }
     if (status !== "denied"){
       raw = await prepare.execute(cwd,signal);
-    }
-  }catch(error){
+    } 
+  }catch(error:unknown){
     status = "error";
     const detail = error instanceof Error ? error.message:String(error);
-    raw = ``;
+    raw = `${detail}`;
+    throw error;
   }
   let content = raw;
   for (const hook of hooks){
     try{
-      const replacement = await hook.afterTool?.({
+        const replacement = await hook.afterTool?.({
         id:call.id,
         name:call.name,
         status:status,
-        raw:raw,
         content:content,
+        raw:raw,
       },signal);
+      signal.throwIfAborted();
       if (typeof replacement === "string"){
         content = replacement;
       }
-    }catch(error){
+    }catch(error:unknown){
       status = "error";
-      const detail = error instanceof Error ? error.message : String(error);
-      content = `工具结果处理失败：${detail}\n原始结果：\n${raw}`;
+      const detail = error instanceof Error ? error.message:String(error);
+      raw = `${detail}`;
       break;
     }
   }
-  if (status !== "success") {
-    content = `[工具状态：${status}]\n${content}`;
+  if (status !== "success"){
+    throw new Error();
   }
   const message = new ToolMessage({
     content: truncateOutput(content),
