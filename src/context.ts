@@ -16,10 +16,9 @@ export function projectContext(entries: SessionEntry[]): ContextParts {
   if (first?.type !== "message" || first.message.type !== "human"){
     throw new Error();
   }
-
-  const history:BaseMessage[] = [];
-  let recent:MessageEntry[] = [];
   let summary:string | undefined;
+  let recent:MessageEntry[] = [];
+  const history:BaseMessage[] = [];
 
   for (const entry of entries){
     if (entry.type === "message"){
@@ -33,19 +32,18 @@ export function projectContext(entries: SessionEntry[]): ContextParts {
       }
     }else if (entry.type === "compaction"){
       validateHistory(history);
-      
-      const index = recent.findIndex((m) => m.id === entry.firstKeptEntryId);
+      const index = recent.findIndex((item) => item.id === entry.firstKeptEntryId);
       if (index <= 0 || recent[index].message.type === "human"){
         throw new Error();
       }
-      validateHistory(recent.slice(0,index).map((m) => decodeMessage(m.message)));
+      validateHistory(recent.slice(0,index).map((item) => decodeMessage(item.message)));
       recent = recent.slice(index);
       summary = entry.summary;
-
     }
   }
-  validateHistory(history);
-  return { system: decodeMessage(first.message), summary, recent };
+  buildContext(entries);
+  return {system:decodeMessage(first.message),recent:recent,summary:summary};
+
 }
 
 

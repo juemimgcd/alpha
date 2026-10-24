@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { BaseMessage } from "@langchain/core/messages";
 import { decodeMessage, encodeMessage } from "./message-codec.ts";
 import { compactionEntrySchema, messageEntrySchema, sessionHeaderSchema, sessionRecordSchema } from "./session-types.ts";
-import type { CompactionEntry, MessageEntry, SessionEntry, SessionHeader, SessionRecord } from "./session-types.ts";
+import type { CompactionEntry, SessionEntry, SessionHeader, SessionRecord } from "./session-types.ts";
 import { buildContext } from "./context.ts";
 
 
@@ -57,50 +57,45 @@ export class SessionManager {
 
   static async load(filePath: string, cwd: string): Promise<SessionManager> {
     const root = await realpath(cwd);
-    const absolutePath = resolve(root, filePath);
-    const text = await readFile(absolutePath, "utf8");
-    if (text === "" || !text.endsWith("\n")) {
-      throw new Error(`${absolutePath}：会话为空或末行没有完整结束；本章不自动修复文件`);
-    }
+    const absolutePath = resolve(root,filePath);
+    const text = await readFile(absolutePath,"utf8");
 
-    const lines = text.slice(0, -1).split("\n");
+    let header:SessionHeader | undefined;
     const ids = new Set<string>();
-    const entries: SessionEntry[] = [];
-    let header: SessionHeader | undefined;
-
-    for (let index = 0; index < lines.length; index += 1) {
-      try {
-        const raw: unknown = JSON.parse(lines[index]);
+    const entries:SessionEntry[] = [];
+    const lines = text.slice(0,-1).split("\n");
+    for (let index = 0;index < lines.length; index++){
+      try{
+        const raw:unknown = JSON.parse(lines[index]);
         const record = sessionRecordSchema.parse(raw);
-        if (ids.has(record.id)) {
-          throw new Error(`记录 ID 重复：${record.id}`);
+        if (ids.has(record.id)){
+          throw new Error();
         }
         ids.add(record.id);
-        if (index === 0) {
-          if (record.type !== "session") {
-            throw new Error("第一行必须是 session 头部");
+        if (index === 0){
+          if (record.type !== "session"){
+            throw new Error();
           }
-          if (record.cwd !== root) {
-            throw new Error(`工作目录不一致：会话属于 ${record.cwd}，当前为 ${root}`);
+          if (record.cwd !== root){
+            throw new Error();
           }
           header = record;
-        } else {
-          if (record.type === "session") {
-            throw new Error("头部不能重复出现");
+        }else {
+          if (record.type === "session"){
+            throw new Error();
           }
           entries.push(record);
         }
-      } catch (error: unknown) {
-        const detail = error instanceof Error ? error.message : String(error);
+      }catch(error:unknown){
+        const detail = error instanceof Error ? error.message:String(error);
         throw new Error(`${absolutePath}:${index + 1}：${detail}`, { cause: error });
       }
     }
-
-    if (header === undefined) {
-      throw new Error(`${absolutePath}：缺少 session 头部`);
+    if (header === undefined){
+      throw new Error();
     }
     buildContext(entries);
-    return new SessionManager(absolutePath, header, entries);
+    return new SessionManager(absolutePath,header,entries);
   }
 
   get id(): string {

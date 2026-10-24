@@ -8,7 +8,6 @@ import type { ModelIO } from "./model-io.ts";
 import { responseCalls, validateHistory } from "./protocol.ts";
 import type { Tool } from "./tools.ts";
 import { SingleRunExtractor } from "@langchain/core/utils/testing";
-import { rmSync } from "node:fs";
 
 export type PrepareContext = (signal: AbortSignal) => Promise<BaseMessage[]>;
 
@@ -22,7 +21,7 @@ export async function runLoop(
   signal: AbortSignal,
   emit: EmitEvent,
 ): Promise<RunResult> {
-  for (let turn = 1; turn <= maxTurns; turn++){
+  for (let turn = 1;turn < maxTurns; turn ++){
     signal.throwIfAborted();
     let requestMessages = await prepareContext(signal);
     signal.throwIfAborted();
@@ -34,8 +33,6 @@ export async function runLoop(
         requestMessages = replacement;
       }
     }
-    validateHistory(requestMessages);
-
     const response = await model.request(requestMessages,signal);
 
     for (const hook of hooks){
@@ -48,35 +45,32 @@ export async function runLoop(
         signal.throwIfAborted();
       }
     }
-    await emit({ type: "message_end", message: response });
     const calls = responseCalls(response);
+    await emit({type:"message_end",message:response});
 
     for (const call of calls){
-      await emit({ type: "tool_start", callId: call.id, name: call.name });
-      const execution = await executeTool(call, tools, hooks, cwd, signal);
-      await emit({ type: "message_end", message: execution.message });
+      await emit({type:"tool_start",callId:call.id,name:call.name});
+      const execution = await executeTool(call,tools,hooks,cwd,signal);
+      await emit({type:"message_end",message:execution.message});
       await emit({
-        type: "tool_end",
-        callId: call.id,
-        name: call.name,
-        status: execution.status,
-        raw: execution.raw,
-        content: execution.message.text,
-      });
+        type:"tool_end",
+        callId:call.id,
+        name:call.name,
+        status:execution.status,
+        content:execution.message.text,
+        raw:execution.raw});
     }
-
+    
     const info:TurnInfo = {
       turn:turn,
       toolCount:calls.length,
-      hasAnswer:calls.length === 0,
+      hasAnswer:calls.length === 0
     };
-    await emit({ type: "turn_end", ...info });
-    signal.throwIfAborted();
 
     for (const hook of hooks){
       const reason = await hook.afterTurn?.(info,signal);
       signal.throwIfAborted();
-      if (typeof reason === "string" && reason.trim() === ""){
+      if (typeof reason === "string" && reason.trim() !== ""){
         return {status:"stopped",reason:reason,turns:turn};
       }
     }
@@ -84,5 +78,5 @@ export async function runLoop(
       return {status:"completed",answer:response.text,turns:turn};
     }
   }
-  throw new Error();
+  throw new Error(); 
 }
