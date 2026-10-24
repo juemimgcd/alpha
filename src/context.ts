@@ -41,7 +41,7 @@ export function projectContext(entries: SessionEntry[]): ContextParts {
       summary = entry.summary;
     }
   }
-  buildContext(entries);
+  validateHistory(history);
   return {system:decodeMessage(first.message),recent:recent,summary:summary};
 
 }

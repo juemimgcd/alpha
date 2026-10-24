@@ -64,6 +64,10 @@ export class SessionManager {
     const ids = new Set<string>();
     const entries:SessionEntry[] = [];
     const lines = text.slice(0,-1).split("\n");
+    if (text === "" || !text.endsWith("\n")) {
+      throw new Error(`${absolutePath}：会话为空或末行没有完整结束；本章不自动修复文件`);
+    }
+
     for (let index = 0;index < lines.length; index++){
       try{
         const raw:unknown = JSON.parse(lines[index]);

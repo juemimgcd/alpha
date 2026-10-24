@@ -21,7 +21,7 @@ export async function runLoop(
   signal: AbortSignal,
   emit: EmitEvent,
 ): Promise<RunResult> {
-  for (let turn = 1;turn < maxTurns; turn ++){
+  for (let turn = 1;turn <= maxTurns; turn ++){
     signal.throwIfAborted();
     let requestMessages = await prepareContext(signal);
     signal.throwIfAborted();
@@ -33,6 +33,7 @@ export async function runLoop(
         requestMessages = replacement;
       }
     }
+    validateHistory(requestMessages);
     const response = await model.request(requestMessages,signal);
 
     for (const hook of hooks){
